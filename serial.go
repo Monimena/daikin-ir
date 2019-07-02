@@ -1,27 +1,64 @@
 package daikin
 
-import "github.com/tarm/serial"
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"github.com/tarm/serial"
+)
 
-var s *serial.Port
-
-func InitSerial() error {
-	var err error
-
-	config := &serial.Config{}
-	s, err = serial.OpenPort(config)
-
-	return err
+type Serial struct {
+	port    *serial.Port
+	manager *Manager
 }
 
-func Write(json string) error {
-	_, err := s.Write([]byte(json))
+func NewSerial(m *Manager) (*Serial, error) {
+	config := &serial.Config{
+		Name: "COM45",
+		Baud: 115200,
+	}
 
-	return err
+	s, err := serial.OpenPort(config)
+
+	return &Serial{
+		manager: m,
+		port:    s,
+	}, err
 }
 
-func Read() ([]byte, error) {
-	buf := make([]byte, 128)
-	_, err := s.Read(buf)
+func (s *Serial) Run() chan error {
+	c := make(chan error)
 
-	return buf, err
+	go func() {
+		for {
+			c <- <-s.readChannel()
+		}
+	}()
+
+	r := bufio.NewReader(s.port)
+
+	for {
+		if b, err := r.ReadBytes('\n'); err == nil {
+			json.Unmarshal(b, s.manager.State)
+		}
+	}
+
+	return c
+}
+
+func (s *Serial) readChannel() chan error {
+	c := make(chan error)
+
+	for i := range s.manager.SerialChan {
+		b, err := json.Marshal(i)
+
+		if err != nil {
+			c <- err
+		}
+
+		fmt.Printf("Received through channel: %v\n", string(b))
+		s.port.Write(b)
+	}
+
+	return c
 }
